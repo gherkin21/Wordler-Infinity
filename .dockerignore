@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.git
+.gitignore
+.dockerignore
+venv/
+*.log
+data/*  # Optional: Exclude existing data files from image, mount via volume instead

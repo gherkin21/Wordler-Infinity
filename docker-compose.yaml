@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  wordle-bot:
+    # Build the image from the Dockerfile in the current directory
+    build: .
+    container_name: discord-wordle-bot
+    # Restart policy: Restart the container unless it's explicitly stopped
+    restart: unless-stopped
+    # Load environment variables from the .env file
+    env_file:
+      - .env
+    # Mount the local ./data directory into the container's /app/data directory
+    # This ensures leaderboard.json and config.json persist across container restarts
+    volumes:
+      - ./data:/app/data
+    # Optional: Set resource limits if needed
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '0.50'
+    #       memory: 256M
+    #     reservations:
+    #       cpus: '0.25'
+    #       memory: 128M
+
+# Optional: Define a volume if you don't want to bind mount
+# volumes:
+#   wordle_data:

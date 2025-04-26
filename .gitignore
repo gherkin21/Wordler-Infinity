@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.git
+venv/
+*.log
+data/*
+idea/
+idea/*
+idea
+.idea
+.idea/*

@@ -425,7 +425,7 @@ class WordleGameCog(commands.Cog):
     @app_commands.command(name="wordlehelp", description="Shows instructions for the Wordle bot.")
     @app_commands.guild_only() # Help probably only makes sense in a guild context anyway
     async def wordle_help(self, interaction: Interaction):
-        embed = discord.Embed(title="Wordle Bot Help", description="Play Solo or Multiplayer Wordle!", color=discord.Color.blue())
+        embed = discord.Embed(title="Wordler Infinity Help", description="Play Solo or Multiplayer Wordle!", color=discord.Color.blue())
         embed.add_field(name="`/wordle`", value="Starts a new **Solo** game.", inline=False)
         embed.add_field(name="`/multiplayer player2 [player3...]`", value="Starts a **Multiplayer** game with mentioned users (up to 5 total).", inline=False)
         embed.add_field(name="`/guess [word]`", value="Make a 5-letter guess in your active game (works for both modes).", inline=False)

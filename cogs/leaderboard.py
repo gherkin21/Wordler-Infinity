@@ -21,9 +21,8 @@ class LeaderboardCog(commands.Cog):
         logger.info("LeaderboardCog loaded.")
 
     # Use the same guild/channel check as WordleGameCog for consistency
-    # Or decide if leaderboard should be allowed anywhere? Let's restrict it.
     def check_guild_and_channel():
-        async def predicate(interaction: discord.Interaction) -> bool:
+        async def predicate(interaction: Interaction) -> bool:
             if not interaction.guild:
                 await interaction.response.send_message("This command only works in a server.", ephemeral=True)
                 return False
@@ -53,7 +52,6 @@ class LeaderboardCog(commands.Cog):
     @check_guild_and_channel() # Apply the check
     async def show_leaderboard(self, interaction: Interaction, scope: Literal['Guild', 'Global'] = 'Guild'):
         """Displays the guild or global leaderboard."""
-        # Guild check done by decorator
         guild_id = interaction.guild_id # We know this exists due to decorator
 
         leaderboard_data = await persistence.load_leaderboard()
@@ -66,7 +64,6 @@ class LeaderboardCog(commands.Cog):
         if scope == 'Guild':
             title = f"🏆 Wordle Leaderboard (Server: {interaction.guild.name}) 🏆"
             guild_id_str = str(guild_id)
-            # Safely get the guild's data, default to empty dict if not found
             data_source = leaderboard_data.get("guilds", {}).get(guild_id_str, {})
             if not data_source:
                  await interaction.response.send_message(f"No leaderboard data found for this server (`{interaction.guild.name}`).", ephemeral=True)
@@ -88,37 +85,27 @@ class LeaderboardCog(commands.Cog):
 
             if games_played <= 0: continue # Skip users who haven't played
 
-            # Fetch username - prioritize guild member if possible for Guild scope
-            username = f"Unknown User ({user_id_str})"
-            user_id_int = None
-            try:
-                 user_id_int = int(user_id_str)
-            except ValueError:
-                 logger.warning(f"Invalid user ID format in {scope} leaderboard: {user_id_str}")
-                 continue
+            # --- MODIFICATION: Use mention string directly ---
+            # Validate that user_id_str is numeric before creating mention
+            if not user_id_str.isdigit():
+                logger.warning(f"Invalid non-numeric user ID found in {scope} leaderboard: {user_id_str}")
+                continue # Skip this entry
 
-            try:
-                member = None
-                if scope == 'Guild' and interaction.guild:
-                    member = interaction.guild.get_member(user_id_int) # Check cache first
-                if member:
-                    username = member.display_name # Use server nickname/display name
-                else:
-                    # Fetch user globally if not found in guild cache or for Global scope
-                    user = await self.bot.fetch_user(user_id_int)
-                    username = user.display_name # Use global display name
-            except discord.NotFound:
-                logger.warning(f"User ID {user_id_str} not found for {scope} leaderboard.")
-            except discord.HTTPException:
-                logger.warning(f"HTTP error fetching user {user_id_str} for {scope} leaderboard.")
+            user_mention = f"<@{user_id_str}>"
+            # No need to fetch user/member object just for the name anymore
+            # Discord clients will automatically render the mention as the current name
+            # --- END MODIFICATION ---
 
             scores.append({
-                "name": username,
+                "mention": user_mention, # Store the mention string
                 "total_points": total_points,
                 "games_played": games_played,
+                # Store user_id as int for sorting if needed, though mention sort might be okay
+                "user_id": int(user_id_str)
             })
 
         # --- Sort and Format ---
+        # Sort primarily by points, then maybe games played as tie-breaker
         scores.sort(key=lambda x: (x["total_points"], -x["games_played"]), reverse=True)
 
         embed = discord.Embed(title=title, color=discord.Color.gold())
@@ -128,10 +115,12 @@ class LeaderboardCog(commands.Cog):
         else:
             for i, score in enumerate(scores[:MAX_LEADERBOARD_ENTRIES]):
                 rank = i + 1
+                # --- MODIFICATION: Use the mention string in the output ---
                 description += (
-                    f"`{rank}.` **{score['name']}**: {score['total_points']} Points "
+                    f"`{rank}.` {score['mention']}: {score['total_points']} Points "
                     f"({score['games_played']} games)\n"
                 )
+                # --- END MODIFICATION ---
 
         embed.description = description
         footer_text=f"Top {min(len(scores), MAX_LEADERBOARD_ENTRIES)} players shown."
@@ -142,5 +131,4 @@ class LeaderboardCog(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    # No config needed here
     await bot.add_cog(LeaderboardCog(bot))

@@ -10,7 +10,7 @@ from utils import persistence
 
 logger = logging.getLogger(__name__)
 
-MAX_LEADERBOARD_ENTRIES = 15
+MAX_LEADERBOARD_ENTRIES = 10
 
 class LeaderboardCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -128,6 +128,46 @@ class LeaderboardCog(commands.Cog):
         embed.set_footer(text=footer_text)
 
         await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="points", description="Shows your current Wordle point totals.")
+    @app_commands.guild_only()  # Still needs guild context for guild points
+    # No channel restriction needed for checking personal points
+    async def show_points(self, interaction: Interaction):
+        """Displays the user's points for the current guild and globally."""
+        user_id = interaction.user.id
+        user_id_str = str(user_id)
+        guild_id = interaction.guild_id
+        guild_id_str = str(guild_id)
+
+        leaderboard_data = await persistence.load_leaderboard()
+
+        guild_data = leaderboard_data.get("guilds", {}).get(guild_id_str, {}).get(user_id_str, {})  # Use {} default
+        guild_points = guild_data.get("total_points", 0)
+        guild_games = guild_data.get("games_played", 0)
+
+        global_data = leaderboard_data.get("global", {}).get(user_id_str, {})  # Use {} default
+        global_points = global_data.get("total_points", 0)
+        global_games = global_data.get("games_played", 0)
+
+        # <<< CHANGE: Use user mention in the title >>>
+        embed = discord.Embed(
+            title=f"📊 Wordle Points for {interaction.user.display_name}",  # Changed from display_name
+            color=discord.Color.blue()
+        )
+        # <<< END CHANGE >>>
+
+        embed.add_field(
+            name=f"Server Points ({interaction.guild.name})",
+            value=f"**{guild_points}** points ({guild_games} games played)",
+            inline=False
+        )
+        embed.add_field(
+            name="Global Points (All Servers)",
+            value=f"**{global_points}** points ({global_games} games played)",
+            inline=False
+        )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

@@ -32,6 +32,7 @@ if not DISCORD_TOKEN:
 intents = discord.Intents.default()
 intents.guilds = True # Essential for guild-specific operations
 intents.members = True # Helpful for fetching member names easily
+intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents) # Prefix is unused for slash commands
 
@@ -40,6 +41,7 @@ INITIAL_EXTENSIONS = [
     'cogs.wordle_game',
     'cogs.admin',
     'cogs.leaderboard',
+    'cogs.utility',
 ]
 
 # --- Bot Events ---

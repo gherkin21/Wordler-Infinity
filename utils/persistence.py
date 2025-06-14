@@ -34,7 +34,7 @@ async def load_config():
                  logger.error(f"'guild_configs' in '{CONFIG_FILE}' is not a dictionary. Resetting.")
                  config_data = {"guild_configs": {}}
 
-            logger.info(f"Configuration loaded successfully from {CONFIG_FILE}.")
+            #logger.info(f"Configuration loaded successfully from {CONFIG_FILE}.")
             return config_data
         except FileNotFoundError:
             logger.warning(f"{CONFIG_FILE} not found. Returning default empty config.")

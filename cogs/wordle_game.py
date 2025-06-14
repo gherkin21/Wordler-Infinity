@@ -18,7 +18,7 @@ from utils.image_generator import EMOJI_TO_STATE, STATE_UNUSED
 
 logger = logging.getLogger(__name__)
 
-INACTIVITY_TIMEOUT = 10 * 60
+INACTIVITY_TIMEOUT = 30 * 60
 
 CORRECT_SPOT_EMOJI = "🟩"; WRONG_SPOT_EMOJI = "🟨"; NOT_IN_WORD_EMOJI = "⬜"
 
@@ -28,7 +28,7 @@ def initial_letter_states() -> Dict[str, int]:
     return {chr(ord('a') + i): STATE_UNUSED for i in range(26)}
 
 class WordleGameCog(commands.Cog):
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot):
         self.bot = bot
         # Unified game state: { initial_message_id: game_state_dict }
         self.all_games: Dict[int, Dict] = {}
@@ -60,7 +60,7 @@ class WordleGameCog(commands.Cog):
     # --- Background Task (MODIFIED NOTIFICATION PART) ---
     @tasks.loop(minutes=1.0)  # Check every 5 minutes
     async def check_inactive_games(self):
-        logger.info(f"Inactive games check started.")
+        # logger.info(f"Inactive games check started.")
         """Periodically checks for and removes inactive games, notifying players via DM."""
         now = time.time()
         games_to_delete = []  # Store tuples of (game_id, game_state)
@@ -218,37 +218,40 @@ class WordleGameCog(commands.Cog):
         return max(0, points) # Ensure non-negative points
 
 
-    # --- Embed Creation ---
-    def create_game_embed(self, interaction: Interaction, game_state: dict, status_message: str = None, is_multiplayer: bool = False, attach_image: bool = False) -> discord.Embed:
-        """Creates the embed for the current game state. Does NOT show board."""
-        embed = None # Initialize embed as None
+    def create_game_embed(self, context_obj, game_state: dict, status_message: str = None, is_multiplayer: bool = False, attach_image: bool = False) -> discord.Embed:
+        """Creates the embed for the current game state. Can handle an Interaction or a User/Member object."""
+        # Determine if we were passed an interaction or a user/member
+        if isinstance(context_obj, Interaction):
+            user = context_obj.user
+            channel = context_obj.channel
+        else:  # Assumes it's a User or Member object
+            user = context_obj
+            channel = None  # We don't have channel context from just a user object
+
+        embed = None
         if is_multiplayer:
             players = game_state.get("players", [])
             current_turn_idx = game_state.get("current_turn_index", 0)
             current_player_id = players[current_turn_idx] if players and current_turn_idx < len(players) else None
             current_player_mention = f"<@{current_player_id}>" if current_player_id else "Unknown Player"
-            channel_name = interaction.channel.name if interaction.channel else "this channel"
+            channel_name = channel.name if channel else "this channel"
             title = f"Multiplayer Wordle ({channel_name})"
             description = status_message if status_message else f"It's {current_player_mention}'s turn! Guess #{len(game_state.get('guesses', [])) + 1}."
             embed = discord.Embed(title=title, description=description, color=discord.Color.purple())
-            player_list_str = ", ".join(game_state.get("player_mentions", ["?"])) # Use stored mentions
+            player_list_str = ", ".join(game_state.get("player_mentions", ["?"]))
             embed.add_field(name="Players", value=player_list_str if player_list_str else "None", inline=False)
             embed.set_footer(text=f"Use /guess [word] or /giveup")
-        else: # Single Player
-            user = interaction.user # Assume interaction user is the player for solo embed context
+        else:  # Single Player
             current_guess_num = len(game_state.get("guesses", []))
             title = f"Wordle Game for {user.display_name}"
             description = status_message if status_message else f"Guess #{current_guess_num + 1}. Good luck!"
-            embed = discord.Embed(
-                title=title, description=description,
-                color=discord.Color.green() if status_message and ("won" in status_message.lower() or "congratulations" in status_message.lower()) else discord.Color.blue()
-            )
-            embed.set_footer(text=f"Use /guess [word] or /giveup")
+            color = discord.Color.green() if status_message and (
+                        "won" in status_message.lower() or "correct" in status_message.lower()) else discord.Color.blue()
+            embed = discord.Embed(title=title, description=description, color=color)
+            embed.set_footer(text=f"Use /guess [word] or guess <word>")
 
-        # Conditionally attach image reference
-        if attach_image and embed: # Make sure embed was created
-             embed.set_image(url="attachment://wordle_board.png")
-
+        if attach_image and embed:
+            embed.set_image(url="attachment://wordle_board.png")
         return embed
 
     # --- Game Start Commands (Send initial EMBED, no image) ---
@@ -358,6 +361,8 @@ class WordleGameCog(commands.Cog):
         if not word_fetcher.is_allowed_guess(guess): await interaction.response.send_message(f"❌ '{word.upper()}' invalid.", ephemeral=True); return
         if guess in game_state.get("guesses",[]): await interaction.response.send_message(f"❌ '{word.upper()}' guessed.", ephemeral=True); return
 
+        await interaction.response.defer()
+
         # Process Guess & Update States...
         target_word = game_state["word"]; feedback = self.generate_feedback(guess, target_word)
         game_state["guesses"].append(guess); game_state["results"].append(feedback)
@@ -407,7 +412,7 @@ class WordleGameCog(commands.Cog):
 
         # --- Create Embed and Send ---
         embed = self.create_game_embed(interaction, game_state, status_message, is_multiplayer=(game_type == 'multiplayer'), attach_image=(file is not None))
-        await interaction.response.send_message(embed=embed, file=file)
+        await interaction.followup.send(embed=embed, file=file)
 
         # Clean up if game over (use the found game_id)
         if game_over:
@@ -432,21 +437,104 @@ class WordleGameCog(commands.Cog):
         game_type = game_state["game_type"]
         target_word = game_state.get("word", "UNKNOWN")
 
+        await interaction.response.defer()
+
         # Remove the game from the central dictionary using its ID
         if game_id in self.all_games:
             del self.all_games[game_id]
             logger.info(f"Game {game_id} ended via giveup by user {user_id}.")
         else:
-             await interaction.response.send_message("Error: Could not find the game state to remove.", ephemeral=True); return
+             await interaction.followup.send("Error: Could not find the game state to remove.", ephemeral=True); return
 
         # Process giveup message and leaderboard update
         if game_type == 'solo':
             await persistence.update_leaderboard(guild_id, user_id, points_earned=0)
-            await interaction.response.send_message(f"Solo game ended by {interaction.user.mention}. Word: `{target_word.upper()}`. Scored 0 points.", ephemeral=False)
+            await interaction.followup.send(f"Solo game ended by {interaction.user.mention}. Word: `{target_word.upper()}`. Scored 0 points.", ephemeral=False)
         else: # Multiplayer giveup
             giver = interaction.user.mention; players = ", ".join(game_state.get("player_mentions", ["?"]))
-            await interaction.response.send_message(f"{giver} ended the MP game for team ({players}). Word: `{target_word.upper()}`.", ephemeral=False)
+            await interaction.followup.send(f"{giver} ended the MP game for team ({players}). Word: `{target_word.upper()}`.", ephemeral=False)
 
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        # 1. Ignore bots and DMs
+        if message.author.bot or not message.guild:
+            return
+
+        # 2. Check if a Wordle channel is configured for this server
+        allowed_channel_id = await persistence.get_guild_channel_id(message.guild.id)
+        if allowed_channel_id is None:
+            return  # A channel must be set for prefix-less commands to work
+
+        # 3. Check if the message is in the designated Wordle channel
+        if message.channel.id != allowed_channel_id:
+            return
+
+        # 4. Process the command
+        content = message.content.lower().strip()
+
+        # --- Handle "new wordle" ---
+        if content == "new wordle" or content == "New Wordle" or content == "New wordle":
+            if await self._is_user_busy(message.guild.id, message.author.id):
+                await message.channel.send(f"{message.author.mention}, you are already in a game.", delete_after=10)
+                return
+
+            target_word = word_fetcher.get_random_word()
+            game_state = {
+                "game_type": "solo", "guild_id": message.guild.id, "channel_id": message.channel.id,
+                "word": target_word, "players": [message.author.id], "guesses": [], "results": [],
+                "letter_states": initial_letter_states(), "last_activity_ts": time.time()
+            }
+            embed = self.create_game_embed(message.author, game_state, "Solo game started! Guess with `guess <word>`.")
+            response_msg = await message.channel.send(embed=embed)
+            self.all_games[response_msg.id] = game_state
+            logger.info(
+                f"Started SOLO game (MsgID: {response_msg.id}) for user {message.author.id} via on_message. Word: {target_word}")
+
+        # --- Handle "guess <word>" ---
+        elif content.startswith("guess "):
+            game_id, game_state = await self._find_user_game_in_channel(message.channel.id, message.author.id)
+            if not game_state:
+                await message.channel.send(f"{message.author.mention}, no active game found for you.", delete_after=10)
+                return
+
+            guess = content[6:].strip()  # Get the word after "guess "
+            if len(guess) != 5 or not guess.isalpha() or not word_fetcher.is_allowed_guess(guess) or guess in \
+                    game_state["guesses"]:
+                await message.channel.send(f"{message.author.mention}, that's an invalid guess.", delete_after=10)
+                return
+
+            # Process the guess
+            target_word = game_state["word"]
+            feedback = self.generate_feedback(guess, target_word)
+            game_state["guesses"].append(guess);
+            game_state["results"].append(feedback)
+            for i, letter in enumerate(guess):
+                new_state = EMOJI_TO_STATE.get(feedback[i], STATE_UNUSED)
+                if new_state > game_state["letter_states"].get(letter, STATE_UNUSED):
+                    game_state["letter_states"][letter] = new_state
+            game_state["last_activity_ts"] = time.time()
+
+            num_guesses = len(game_state["guesses"])
+            game_over = False;
+            status_message = ""
+            if guess == target_word:
+                game_over = True
+                points = self.calculate_points(num_guesses)
+                status_message = f"🎉 **Correct!** {message.author.mention} guessed `{target_word.upper()}` in {num_guesses} tries! Scored **{points} points**."
+                await persistence.update_leaderboard(message.guild.id, message.author.id, points)
+            else:
+                status_message = f"Guess #{num_guesses + 1}. Keep going!"
+
+            img_buffer = image_generator.generate_wordle_image(game_state["guesses"], game_state["results"],
+                                                               game_state["letter_states"])
+            file = discord.File(fp=img_buffer, filename="wordle_board.png") if img_buffer else None
+            embed = self.create_game_embed(message.author, game_state, status_message, attach_image=(file is not None))
+            await message.channel.send(embed=embed, file=file)
+
+            if game_over:
+                if game_id in self.all_games:
+                    del self.all_games[game_id]
+                    logger.info(f"Game {game_id} ended and removed via on_message.")
 
     # --- HELP Command (No changes needed) ---
     @app_commands.command(name="wordlehelp", description="Shows instructions for the Wordle bot.")

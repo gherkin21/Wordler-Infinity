@@ -34,7 +34,7 @@ intents.guilds = True # Essential for guild-specific operations
 intents.members = True # Helpful for fetching member names easily
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents) # Prefix is unused for slash commands
+bot = commands.Bot(command_prefix="wi!", intents=intents) # Prefix is unused for slash commands
 
 # --- Cogs to Load ---
 INITIAL_EXTENSIONS = [
@@ -54,6 +54,7 @@ async def on_ready():
 
     # Set status (optional)
     await bot.change_presence(activity=discord.Game(name="/wordle | /wordlehelp"))
+
 
     # Sync slash commands (important!)
     # Normally, you'd sync specific guilds for testing, then sync globally

@@ -1,26 +1,24 @@
 import discord
 from discord.ext import commands
 from discord import app_commands, Interaction
-from discord.app_commands import Choice # For scope parameter
+from discord.app_commands import Choice
 import logging
-from typing import Literal # For scope type hint
+from typing import Literal
 
-# Use updated persistence
-from utils import persistence
+from utils import persistence, stats_generator, localization
 
 logger = logging.getLogger(__name__)
 
 MAX_LEADERBOARD_ENTRIES = 10
 
+
 class LeaderboardCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # No local config needed
 
     async def cog_load(self):
         logger.info("LeaderboardCog loaded.")
 
-    # Use the same guild/channel check as WordleGameCog for consistency
     def check_guild_and_channel():
         async def predicate(interaction: Interaction) -> bool:
             if not interaction.guild:
@@ -28,31 +26,34 @@ class LeaderboardCog(commands.Cog):
                 return False
             guild_id = interaction.guild_id
             allowed_channel_id = await persistence.get_guild_channel_id(guild_id)
-            if allowed_channel_id is None: return True # Allow if no channel set for this guild
+            if allowed_channel_id is None: return True
             if interaction.channel_id == allowed_channel_id: return True
-            # Deny otherwise, send error message
+
             try:
-                channel = interaction.guild.get_channel(allowed_channel_id) or await interaction.guild.fetch_channel(allowed_channel_id)
+                channel = interaction.guild.get_channel(allowed_channel_id) or await interaction.guild.fetch_channel(
+                    allowed_channel_id)
                 channel_name = channel.mention if channel else f"ID: {allowed_channel_id}"
+
+                lang = await persistence.get_guild_language(guild_id)
+                msg = localization.get_text(lang, "wrong_channel", channel=channel_name)
+
+                await interaction.response.send_message(msg, ephemeral=True)
+            except Exception:
                 await interaction.response.send_message(
-                    f"❌ Please use `/leaderboard` in the designated Wordle channel for this server: {channel_name}",
-                    ephemeral=True
-                )
-            except Exception: # Catch broad exceptions for error reporting
-                 await interaction.response.send_message(
                     f"❌ Please use `/leaderboard` in the designated Wordle channel for this server.",
                     ephemeral=True
                 )
             return False
-        return app_commands.check(predicate)
 
+        return app_commands.check(predicate)
 
     @app_commands.command(name="leaderboard", description="Shows Wordle rankings by total points.")
     @app_commands.describe(scope="Choose whether to view the leaderboard for this server or globally.")
-    @check_guild_and_channel() # Apply the check
+    @check_guild_and_channel()
     async def show_leaderboard(self, interaction: Interaction, scope: Literal['Guild', 'Global'] = 'Guild'):
         """Displays the guild or global leaderboard."""
-        guild_id = interaction.guild_id # We know this exists due to decorator
+        guild_id = interaction.guild_id
+        lang = await persistence.get_guild_language(guild_id)
 
         leaderboard_data = await persistence.load_leaderboard()
 
@@ -60,84 +61,80 @@ class LeaderboardCog(commands.Cog):
         title = ""
         data_source = {}
 
-        # --- Select Data Source and Title ---
         if scope == 'Guild':
-            title = f"🏆 Wordle Leaderboard (Server: {interaction.guild.name}) 🏆"
+            title = localization.get_text(lang, "lb_title_server", guild=interaction.guild.name)
             guild_id_str = str(guild_id)
             data_source = leaderboard_data.get("guilds", {}).get(guild_id_str, {})
             if not data_source:
-                 await interaction.response.send_message(f"No leaderboard data found for this server (`{interaction.guild.name}`).", ephemeral=True)
-                 return
+                msg = localization.get_text(lang, "lb_empty_server", guild=interaction.guild.name)
+                await interaction.response.send_message(msg, ephemeral=True)
+                return
 
         elif scope == 'Global':
-            title = "🏆 Wordle Leaderboard (Global) 🏆"
+            title = localization.get_text(lang, "lb_title_global")
             data_source = leaderboard_data.get("global", {})
             if not data_source:
-                 await interaction.response.send_message("The global leaderboard is currently empty.", ephemeral=True)
-                 return
+                msg = localization.get_text(lang, "lb_empty_global")
+                await interaction.response.send_message(msg, ephemeral=True)
+                return
 
-        # --- Process Scores ---
         for user_id_str, data in data_source.items():
-            if not isinstance(data, dict): continue # Skip malformed entries
+            if not isinstance(data, dict): continue
 
             total_points = data.get("total_points", 0)
             games_played = data.get("games_played", 0)
 
-            if games_played <= 0: continue # Skip users who haven't played
+            if games_played <= 0: continue
 
-            # --- MODIFICATION: Use mention string directly ---
-            # Validate that user_id_str is numeric before creating mention
             if not user_id_str.isdigit():
                 logger.warning(f"Invalid non-numeric user ID found in {scope} leaderboard: {user_id_str}")
-                continue # Skip this entry
+                continue
 
             user_mention = f"<@{user_id_str}>"
-            # No need to fetch user/member object just for the name anymore
-            # Discord clients will automatically render the mention as the current name
-            # --- END MODIFICATION ---
+
 
             scores.append({
-                "mention": user_mention, # Store the mention string
+                "mention": user_mention,
                 "total_points": total_points,
                 "games_played": games_played,
-                # Store user_id as int for sorting if needed, though mention sort might be okay
                 "user_id": int(user_id_str)
             })
 
-        # --- Sort and Format ---
-        # Sort primarily by points, then maybe games played as tie-breaker
         scores.sort(key=lambda x: (x["total_points"], -x["games_played"]), reverse=True)
 
         embed = discord.Embed(title=title, color=discord.Color.gold())
         description = ""
         if not scores:
-            description = "No scores recorded yet for this scope."
+            description = localization.get_text(lang, "lb_no_scores")
         else:
             for i, score in enumerate(scores[:MAX_LEADERBOARD_ENTRIES]):
                 rank = i + 1
-                # --- MODIFICATION: Use the mention string in the output ---
                 description += (
-                    f"`{rank}.` {score['mention']}: {score['total_points']} Points "
-                    f"({score['games_played']} games)\n"
+                    f"`{rank}.` {score['mention']}: {score['total_points']} "
+                    f"({score['games_played']})\n"
                 )
-                # --- END MODIFICATION ---
+
 
         embed.description = description
-        footer_text=f"Top {min(len(scores), MAX_LEADERBOARD_ENTRIES)} players shown."
-        if len(scores) > MAX_LEADERBOARD_ENTRIES: footer_text += f" ({len(scores)} total)"
+
+        count_shown = min(len(scores), MAX_LEADERBOARD_ENTRIES)
+        footer_text = localization.get_text(lang, "lb_footer", count=count_shown)
+
+        if len(scores) > MAX_LEADERBOARD_ENTRIES:
+            footer_text += localization.get_text(lang, "lb_footer_total", total=len(scores))
+
         embed.set_footer(text=footer_text)
 
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="points", description="Shows your current Wordle point totals.")
-    @app_commands.guild_only()  # Still needs guild context for guild points
-    # No channel restriction needed for checking personal points
+    @app_commands.guild_only()
     async def show_points(self, interaction: Interaction):
-        """Displays the user's points for the current guild and globally."""
         user_id = interaction.user.id
         user_id_str = str(user_id)
         guild_id = interaction.guild_id
         guild_id_str = str(guild_id)
+        lang = await persistence.get_guild_language(guild_id)
 
         leaderboard_data = await persistence.load_leaderboard()
 
@@ -149,25 +146,100 @@ class LeaderboardCog(commands.Cog):
         global_points = global_data.get("total_points", 0)
         global_games = global_data.get("games_played", 0)
 
-        # <<< CHANGE: Use user mention in the title >>>
+        title = localization.get_text(lang, "pts_title", user=interaction.user.display_name)
         embed = discord.Embed(
-            title=f"📊 Wordle Points for {interaction.user.display_name}",  # Changed from display_name
+            title=title,
             color=discord.Color.blue()
         )
-        # <<< END CHANGE >>>
+
+        field_server = localization.get_text(lang, "pts_server", guild=interaction.guild.name)
+        value_server = localization.get_text(lang, "pts_details", points=guild_points, games=guild_games)
 
         embed.add_field(
-            name=f"Server Points ({interaction.guild.name})",
-            value=f"**{guild_points}** points ({guild_games} games played)",
+            name=field_server,
+            value=value_server,
             inline=False
         )
+
+        field_global = localization.get_text(lang, "pts_global")
+        value_global = localization.get_text(lang, "pts_details", points=global_points, games=global_games)
+
         embed.add_field(
-            name="Global Points (All Servers)",
-            value=f"**{global_points}** points ({global_games} games played)",
+            name=field_global,
+            value=value_global,
             inline=False
         )
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="stats", description="Displays detailed Wordle statistics for a user.")
+    @app_commands.describe(user="The user to view stats for (defaults to yourself).")
+    async def show_stats(self, interaction: Interaction, user: discord.User = None):
+        target_user = user or interaction.user
+        user_id_str = str(target_user.id)
+
+        lang = "en"
+        if interaction.guild_id:
+            lang = await persistence.get_guild_language(interaction.guild_id)
+
+        await interaction.response.defer()
+
+        data = await persistence.load_leaderboard()
+        user_entry = data.get("global", {}).get(user_id_str, {})
+        stats_raw = user_entry.get("stats", {})
+
+        wins = stats_raw.get("wins", 0)
+        losses = stats_raw.get("losses", 0)
+        played = wins + losses
+        win_pct = (wins / played * 100) if played > 0 else 0
+
+        starting_words = stats_raw.get("starting_words", {})
+        fav_starter = max(starting_words, key=starting_words.get) if starting_words else "N/A"
+
+        stats_data = {
+            "played": played,
+            "win_pct": win_pct,
+            "current_streak": stats_raw.get("current_streak", 0),
+            "max_streak": stats_raw.get("max_streak", 0),
+            "distribution": stats_raw.get("distribution", {}),
+            "fav_starter": fav_starter
+        }
+
+        avatar_bytes = None
+        try:
+            if target_user.display_avatar:
+                avatar_bytes = await target_user.display_avatar.read()
+        except Exception as e:
+            logger.warning(f"Failed to fetch avatar for {target_user.id}: {e}")
+
+        labels = {
+            "stats_header": localization.get_text(lang, "stats_header", user=target_user.name),
+            "stats_played": localization.get_text(lang, "stats_played"),
+            "stats_win_pct": localization.get_text(lang, "stats_win_pct"),
+            "stats_streak_current": localization.get_text(lang, "stats_streak_current"),
+            "stats_streak_max": localization.get_text(lang, "stats_streak_max"),
+            "stats_distribution": localization.get_text(lang, "stats_distribution"),
+            "stats_favorite_starter": localization.get_text(lang, "stats_favorite_starter", word="{word}")
+        }
+
+        img_buffer = await self.bot.loop.run_in_executor(
+            None,
+            stats_generator.generate_stats_image,
+            target_user.name,
+            stats_data,
+            avatar_bytes,
+            labels
+        )
+
+        if img_buffer:
+            file = discord.File(fp=img_buffer, filename="stats.png")
+            embed_title = localization.get_text(lang, "stats_embed_title", user=target_user.display_name)
+            embed = discord.Embed(title=embed_title, color=discord.Color.gold())
+            embed.set_image(url="attachment://stats.png")
+            await interaction.followup.send(embed=embed, file=file)
+        else:
+            msg = localization.get_text(lang, "stats_error")
+            await interaction.followup.send(msg)
 
 
 async def setup(bot: commands.Bot):

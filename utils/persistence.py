@@ -2,7 +2,6 @@ import json
 import logging
 import os
 import asyncio
-from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -16,39 +15,29 @@ leaderboard_lock = asyncio.Lock()
 def ensure_data_dir():
     os.makedirs(DATA_DIR, exist_ok=True)
 
-# --- Config Persistence (Guild-Aware) ---
 
 async def load_config():
-    """Loads the bot configuration (guild-specific settings)."""
     ensure_data_dir()
+    default_structure = {
+        "guild_configs": {},
+        "chatter_enabled": {},
+        "chatter_opt_out": []
+    }
     async with config_lock:
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 config_data = json.load(f)
-            # Basic validation: Ensure top-level key exists
-            if "guild_configs" not in config_data:
-                 logger.warning(f"'{CONFIG_FILE}' missing 'guild_configs' key. Initializing.")
-                 config_data = {"guild_configs": {}}
-            # Further validation: ensure guild_configs is a dict
-            elif not isinstance(config_data.get("guild_configs"), dict):
-                 logger.error(f"'guild_configs' in '{CONFIG_FILE}' is not a dictionary. Resetting.")
-                 config_data = {"guild_configs": {}}
-
-            #logger.info(f"Configuration loaded successfully from {CONFIG_FILE}.")
+            if "guild_configs" not in config_data: config_data["guild_configs"] = {}
+            if "chatter_enabled" not in config_data: config_data["chatter_enabled"] = {}
+            if "chatter_opt_out" not in config_data: config_data["chatter_opt_out"] = []
             return config_data
         except FileNotFoundError:
-            logger.warning(f"{CONFIG_FILE} not found. Returning default empty config.")
-            # Default structure: dictionary containing guild-specific configs
-            return {"guild_configs": {}}
+            return default_structure
         except json.JSONDecodeError:
-            logger.error(f"Error decoding JSON from {CONFIG_FILE}. Returning default empty config.")
-            return {"guild_configs": {}}
-        except Exception as e:
-            logger.error(f"Unexpected error loading config: {e}")
-            return {"guild_configs": {}}
+            logger.error(f"Error decoding JSON from {CONFIG_FILE}. Returning default structure.")
+            return default_structure
 
 async def save_config(config_data):
-    """Saves the bot configuration."""
     ensure_data_dir()
     async with config_lock:
         try:
@@ -64,22 +53,18 @@ async def save_config(config_data):
             return False
 
 async def get_guild_channel_id(guild_id: int) -> int | None:
-    """Gets the configured Wordle channel ID for a specific guild."""
     config = await load_config()
     guild_id_str = str(guild_id)
     return config.get("guild_configs", {}).get(guild_id_str, None)
 
 async def set_guild_channel_id(guild_id: int, channel_id: int | None):
-    """Sets the Wordle channel ID for a specific guild."""
     config = await load_config()
     guild_id_str = str(guild_id)
 
-    # Ensure the main structure exists
     if "guild_configs" not in config:
         config["guild_configs"] = {}
 
     if channel_id is None:
-        # Remove the setting for the guild if channel_id is None
         config["guild_configs"].pop(guild_id_str, None)
         logger.info(f"Removed Wordle channel setting for guild {guild_id}.")
     else:
@@ -87,9 +72,6 @@ async def set_guild_channel_id(guild_id: int, channel_id: int | None):
         logger.info(f"Set Wordle channel for guild {guild_id} to {channel_id}.")
 
     await save_config(config)
-
-
-# --- Leaderboard Persistence (Guild + Global) ---
 
 async def load_leaderboard():
     """Loads guild-specific and global leaderboard data."""
@@ -100,7 +82,6 @@ async def load_leaderboard():
             with open(LEADERBOARD_FILE, 'r', encoding='utf-8') as f:
                 leaderboard_data = json.load(f)
 
-            # --- Validation and Migration ---
             migrated = False
             if not isinstance(leaderboard_data, dict) or \
                "guilds" not in leaderboard_data or \
@@ -109,12 +90,11 @@ async def load_leaderboard():
                not isinstance(leaderboard_data.get("global"), dict):
                 logger.warning(f"Leaderboard file '{LEADERBOARD_FILE}' has incorrect structure. Resetting.")
                 leaderboard_data = default_structure
-                migrated = True # Mark for potential immediate save if needed
+                migrated = True
 
-            # Optional: Further validation within guild/global structures if needed
 
             logger.info(f"Leaderboard loaded successfully from {LEADERBOARD_FILE}.")
-            # if migrated: await save_leaderboard(leaderboard_data) # Save immediately if structure was fixed
+
             return leaderboard_data
 
         except FileNotFoundError:
@@ -129,7 +109,6 @@ async def load_leaderboard():
 
 
 async def save_leaderboard(leaderboard_data):
-    """Saves the combined leaderboard data."""
     ensure_data_dir()
     async with leaderboard_lock:
         try:
@@ -145,17 +124,14 @@ async def save_leaderboard(leaderboard_data):
             return False
 
 async def update_leaderboard(guild_id: int, user_id: int, points_earned: int):
-    """Updates both guild and global leaderboards for a user."""
     leaderboard_data = await load_leaderboard()
     guild_id_str = str(guild_id)
     user_id_str = str(user_id)
 
-    # --- Update Guild Leaderboard ---
     if guild_id_str not in leaderboard_data["guilds"]:
         leaderboard_data["guilds"][guild_id_str] = {}
     if user_id_str not in leaderboard_data["guilds"][guild_id_str]:
         leaderboard_data["guilds"][guild_id_str][user_id_str] = {"total_points": 0, "games_played": 0}
-    # Ensure keys exist (handle potential previous corruption)
     guild_user_data = leaderboard_data["guilds"][guild_id_str][user_id_str]
     if "total_points" not in guild_user_data: guild_user_data["total_points"] = 0
     if "games_played" not in guild_user_data: guild_user_data["games_played"] = 0
@@ -163,10 +139,8 @@ async def update_leaderboard(guild_id: int, user_id: int, points_earned: int):
     guild_user_data["games_played"] += 1
     guild_user_data["total_points"] += points_earned
 
-    # --- Update Global Leaderboard ---
     if user_id_str not in leaderboard_data["global"]:
         leaderboard_data["global"][user_id_str] = {"total_points": 0, "games_played": 0}
-    # Ensure keys exist
     global_user_data = leaderboard_data["global"][user_id_str]
     if "total_points" not in global_user_data: global_user_data["total_points"] = 0
     if "games_played" not in global_user_data: global_user_data["games_played"] = 0
@@ -176,3 +150,57 @@ async def update_leaderboard(guild_id: int, user_id: int, points_earned: int):
 
     await save_leaderboard(leaderboard_data)
     logger.info(f"Updated leaderboards for user {user_id} in guild {guild_id}. Points: {points_earned}. Guild Total: {guild_user_data['total_points']}. Global Total: {global_user_data['total_points']}")
+
+async def get_guild_language(guild_id: int) -> str:
+    config = await load_config()
+    return config.get("guild_languages", {}).get(str(guild_id), "en")
+
+async def set_guild_language(guild_id: int, lang_code: str):
+    config = await load_config()
+    if "guild_languages" not in config:
+        config["guild_languages"] = {}
+
+    config["guild_languages"][str(guild_id)] = lang_code
+    await save_config(config)
+    logger.info(f"Set language for guild {guild_id} to {lang_code}.")
+
+
+async def update_detailed_stats(user_id: int, is_win: bool, num_guesses: int, starting_word: str):
+    leaderboard_data = await load_leaderboard()
+    user_id_str = str(user_id)
+
+    if user_id_str not in leaderboard_data["global"]:
+        leaderboard_data["global"][user_id_str] = {"total_points": 0, "games_played": 0}
+
+    user_data = leaderboard_data["global"][user_id_str]
+
+    if "stats" not in user_data:
+        user_data["stats"] = {
+            "wins": 0,
+            "losses": 0,
+            "current_streak": 0,
+            "max_streak": 0,
+            "distribution": {},
+            "starting_words": {}
+        }
+
+    stats = user_data["stats"]
+
+    if is_win:
+        stats["wins"] += 1
+        stats["current_streak"] += 1
+        if stats["current_streak"] > stats.get("max_streak", 0):
+            stats["max_streak"] = stats["current_streak"]
+
+        str_guesses = str(num_guesses)
+        stats["distribution"][str_guesses] = stats["distribution"].get(str_guesses, 0) + 1
+    else:
+        stats["losses"] += 1
+        stats["current_streak"] = 0
+
+    if starting_word:
+        w = starting_word.lower()
+        stats["starting_words"][w] = stats["starting_words"].get(w, 0) + 1
+
+    await save_leaderboard(leaderboard_data)
+    logger.info(f"Updated detailed stats for user {user_id}. Win: {is_win}")

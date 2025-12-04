@@ -4,76 +4,63 @@ import os
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = "data" # Define data directory
-ANSWER_FILE = os.path.join(DATA_DIR, "answers.txt")
-ALLOWED_FILE = os.path.join(DATA_DIR, "allowed.txt")
+DATA_DIR = "data"
+WORD_DATA = {}
 
-# --- Globals to cache word lists ---
-possible_answers = []
-allowed_guesses = set() # Use a set for faster lookups
 
 def load_word_list_from_file(filepath):
-    """Loads a word list from a local file."""
     try:
-        # Ensure UTF-8 encoding is used, common for text files
         with open(filepath, 'r', encoding='utf-8') as f:
-            # Read lines, strip whitespace, convert to lower, filter empty lines
-            words = [line.strip().lower() for line in f if line.strip()]
-            return words
+            return [line.strip().lower() for line in f if line.strip()]
     except FileNotFoundError:
-        logger.error(f"Error: Word list file not found at {filepath}")
         return None
-    except Exception as e:
-        logger.error(f"Unexpected error loading word list from {filepath}: {e}")
-        return None
+
 
 async def load_word_lists():
-    """Loads both word lists from local files."""
-    global possible_answers, allowed_guesses
-    logger.info(f"Attempting to load word lists from {ANSWER_FILE} and {ALLOWED_FILE}...")
+    """Loads word lists for all found language subdirectories."""
+    global WORD_DATA
+    logger.info("Loading word lists for all languages...")
 
-    # Ensure data directory exists (though persistence.py likely does this too)
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    answers = load_word_list_from_file(ANSWER_FILE)
-    allowed = load_word_list_from_file(ALLOWED_FILE)
+    found_langs = 0
+    for item in os.listdir(DATA_DIR):
+        lang_path = os.path.join(DATA_DIR, item)
+        if os.path.isdir(lang_path):
+            answers_path = os.path.join(lang_path, "answers.txt")
+            allowed_path = os.path.join(lang_path, "allowed.txt")
 
-    if answers is None or allowed is None:
-        logger.error("Failed to load one or both word lists from local files. Bot may not function correctly.")
-        return False # Indicate failure
+            answers = load_word_list_from_file(answers_path)
+            allowed = load_word_list_from_file(allowed_path)
 
-    possible_answers = [word for word in answers if len(word) == 5 and word.isalpha()]
-    # Allowed guesses include the answers plus other valid words
-    temp_allowed = set(word for word in allowed if len(word) == 5 and word.isalpha())
-    allowed_guesses = temp_allowed.union(set(possible_answers)) # Ensure all answers are allowed guesses
+            if answers and allowed:
+                valid_answers = [w for w in answers if len(w) == 5 and w.isalpha()]
+                temp_allowed = set(w for w in allowed if len(w) == 5 and w.isalpha())
+                full_allowed = temp_allowed.union(set(valid_answers))
 
-    if not possible_answers:
-        logger.error("Answer list is empty after processing. Check {ANSWER_FILE}.")
+                WORD_DATA[item] = {
+                    "answers": valid_answers,
+                    "allowed": full_allowed
+                }
+                logger.info(f"Loaded language '{item}': {len(valid_answers)} answers.")
+                found_langs += 1
+            else:
+                logger.warning(f"Skipping '{item}': Missing answers.txt or allowed.txt")
+
+    if found_langs == 0:
+        logger.error("No valid word lists found in data/ subdirectories!")
         return False
-    if not allowed_guesses:
-        logger.error("Allowed guesses list is empty after processing. Check {ALLOWED_FILE}.")
-        return False
 
-    logger.info(f"Loaded {len(possible_answers)} possible answers and {len(allowed_guesses)} allowed guesses from local files.")
-    return True # Indicate success
+    return True
 
-# --- Rest of the functions remain the same ---
 
-def get_random_word():
-    """Returns a random word from the possible answers list."""
-    if not possible_answers:
-        logger.error("Attempted to get random word, but answer list is empty.")
-        return None
-    return random.choice(possible_answers)
+def get_random_word(lang="en"):
+    data = WORD_DATA.get(lang, WORD_DATA.get("en"))
+    if not data or not data["answers"]: return None
+    return random.choice(data["answers"])
 
-def is_allowed_guess(word):
-    """Checks if a word is in the allowed guesses list."""
-    return word.lower() in allowed_guesses
 
-def get_possible_answers():
-    """Returns the list of possible answers."""
-    return possible_answers
-
-def get_allowed_guesses():
-    """Returns the set of allowed guesses."""
-    return allowed_guesses
+def is_allowed_guess(word, lang="en"):
+    data = WORD_DATA.get(lang, WORD_DATA.get("en"))
+    if not data: return False
+    return word.lower() in data["allowed"]

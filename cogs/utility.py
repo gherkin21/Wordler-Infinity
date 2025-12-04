@@ -1,19 +1,16 @@
-# cogs/utility.py
-
 import discord
 from discord.ext import commands
 from discord import app_commands, Interaction, Embed
 import logging
-import datetime # For timestamp
+import datetime
 
-import asyncio # Import asyncio
-import time    # Import time
-import random  # For generating fake data
+import asyncio
+import time
+import random
 import io
 from typing import Dict, List, Tuple
 
 from utils.image_generator import generate_wordle_image
-# Import constants needed to generate input for the image generator
 from utils.image_generator import EMOJI_TO_STATE, STATE_UNUSED
 
 logger = logging.getLogger(__name__)
@@ -32,7 +29,6 @@ class UtilityCog(commands.Cog):
     @app_commands.command(name="contact", description="Sends a message to the bot owner(s).")
     @app_commands.describe(message="The message you want to send.")
     async def contact_owner(self, interaction: Interaction, message: str):
-        """Sends a message from the user to the bot owner(s) via DM."""
         owner_ids = [334365988697014273]
 
 
@@ -44,12 +40,11 @@ class UtilityCog(commands.Cog):
             )
             return
 
-        # Prepare embed to send to owner(s)
         embed = Embed(
             title="📬 Bot Contact Message",
             description=message,
             color=discord.Color.blue(),
-            timestamp=discord.utils.utcnow() # Use discord's aware datetime
+            timestamp=discord.utils.utcnow()
         )
         embed.set_author(
             name=f"{interaction.user.name} ({interaction.user.id})",
@@ -68,7 +63,7 @@ class UtilityCog(commands.Cog):
         fail_count = 0
 
         for owner_id in owner_ids:
-             if owner_id is None: # Skip if somehow None is in the set
+             if owner_id is None:
                  continue
              try:
                 owner_user = self.bot.get_user(owner_id) or await self.bot.fetch_user(owner_id)
@@ -89,7 +84,6 @@ class UtilityCog(commands.Cog):
                 logger.error(f"Failed to send contact message to owner {owner_id}: {e}")
                 fail_count += 1
 
-        # Send confirmation back to the invoking user
         if success_count > 0:
             await interaction.response.send_message(
                 f"✅ Your message has been sent to the bot owner(s).",
@@ -101,7 +95,6 @@ class UtilityCog(commands.Cog):
                 ephemeral=True
             )
 
-    # --- SIMULATION COMMAND (Uses locally defined initial_letter_states) ---
     @commands.command(name="simload", hidden=True)
     @commands.is_owner()
     async def simulate_load(self, ctx: commands.Context, num_tasks: int = 100):
@@ -113,7 +106,6 @@ class UtilityCog(commands.Cog):
 
         tasks = []
         for i in range(num_tasks):
-            # Create fake data ...
             if i < num_tasks * 0.6:
                 num_guesses = random.randint(1, 6)
             elif i < num_tasks * 0.9:
@@ -123,7 +115,7 @@ class UtilityCog(commands.Cog):
             fake_guesses = ["ARISE", "CLOUD", "PAINT", "STEAK", "BRICK", "PLUMB", "FANCY", "GHOST", "WHIRL",
                             "MAGIC", "JUMPY", "BLITZ", "VIXEN", "QUERY", "ZEBRA"][:num_guesses]
             fake_results = []
-            task_letter_states = initial_letter_states()  # Use local definition
+            task_letter_states = initial_letter_states()
             for r_idx in range(num_guesses):
                 guess_word = fake_guesses[r_idx].lower()
                 result_row = random.choices(["🟩", "🟨", "⬜"], k=5)
@@ -134,11 +126,9 @@ class UtilityCog(commands.Cog):
                         new_state = EMOJI_TO_STATE.get(result_row[c_idx], STATE_UNUSED)
                         if new_state > task_letter_states.get(letter, STATE_UNUSED):
                             task_letter_states[letter] = new_state
-            # Create coroutine...
             coro = self._run_image_generation_in_executor(fake_guesses, fake_results, task_letter_states, i)
             tasks.append(coro)
 
-        # Run tasks...
         start_time = time.perf_counter()
         results = await asyncio.gather(*tasks, return_exceptions=True)
         end_time = time.perf_counter()
@@ -163,7 +153,5 @@ class UtilityCog(commands.Cog):
             logger.error(f"SIMLOAD: Exception in executor task {task_id}: {e}"); return e
 
 
-
-# The setup function is crucial for the bot to load the cog
 async def setup(bot: commands.Bot):
     await bot.add_cog(UtilityCog(bot))
